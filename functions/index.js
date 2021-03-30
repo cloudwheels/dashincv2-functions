@@ -11,9 +11,11 @@ const db = admin.firestore();
 
 // import transfer function
 const transfer = require("./transfer");
-const { auth } = require("firebase-admin");
+// const {auth} = require("firebase-admin");
 exports.transfer = transfer.transfer;
 exports.importUsers = transfer.importUsers;
+exports.importTasks = transfer.importTasks;
+exports.importBounties = transfer.importBounties;
 
 exports.AddUserRole = functions.auth.user().onCreate(async (authUser) => {
   if (authUser.email) {

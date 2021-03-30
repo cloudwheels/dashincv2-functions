@@ -28,125 +28,147 @@ const settings = {
 const apiMembers = `https://api.trello.com/1/board/${settings.board}/members?key=${settings.key}&fields=id,username,fullName,avatarHash,avatarUrl,initials,memberType`;
 // https://api.trello.com/1/board/FPJzDcok/members?key=910955be8cf85efce2eb715fea302f2b&fields=id,username,fullName,avatarHash,avatarUrl,initials,memberType
 const apiCards = `https://api.trello.com/1/board/${settings.board}/cards?checklists=all&fields=id,name,idList,shortUrl,desc&customFieldItems=true&members=true&member_fields=username&key=${settings.key}`;
+// https://api.trello.com/1/board/FPJzDcok/cards?checklists=all&fields=id,name,idList,shortUrl,desc&customFieldItems=true&members=true&member_fields=username&key=910955be8cf85efce2eb715fea302f2b
+
 //to retireve avatar, add /50.png to url (for 50px avatar)
 
 const db = admin.firestore();
 
 
 
-
-exports.transfer = functions
+exports.importUsers = functions
     .https.onRequest(async (req, res) => {
         res.set('Access-Control-Allow-Origin', '*');
 
+        // delete all exiting users
+
+        const allUsers = await admin.auth().listUsers();
+        //console.log("allUSers", allUsers);
+        const allUsersUID = allUsers.users.map((user) => user.uid);
+        await admin.auth().deleteUsers(allUsersUID);
+        console.log("deleted existing users");
+
+        // delete the roles collection
+        console.log("deleting roles");
+        await deleteCollection(db, "roles", 100);
+        console.log("deleted roles");
+
+        // fetch users from trello & create in firebase
+
+        const reqMembers = await axios.get(apiMembers);
+        const members = reqMembers.data;
+            //console.log(`retrieved member data: ${JSON.stringify(members)}`);
+
+            /*await Promise.all(*/return members.forEach((m) => {
+            //console.log("creating user");
+
+            let photoUrl
+            if (validURL(m.avatarUrl)) {
+                photoUrl = `${m.avatarUrl}/50.png`
+            }
+            else {
+                photoUrl = `https://via.placeholder.com/50.png`
+            }
+                //console.log(photoUrl)
+                /*const userRecord = await*/ admin
+                .auth()
+                .createUser({
+                    uid: m.id,
+                    email: `${m.username}@dashincubator.app`,
+                    password: 'password',
+                    displayName: m.username,
+                    photoURL: photoUrl
+                })
+                .then((result) => {
+                    console.log("Successfully created new user:", result.uid);
+                })
+                .catch((error) => {
+                    console.log("Error Creating User:", error);
+                })
 
 
-        try {
-            // delete all exiting users
-
-            const allUsers = await admin.auth().listUsers();
-            console.log("allUSers", allUsers);
-            const allUsersUID = allUsers.users.map((user) => user.uid);
-            await admin.auth().deleteUsers(allUsersUID);
-            console.log("deleted existing users");
+        })/*)*/
 
 
-            // delete all firestore collections
 
-            // delete the roles collection
-            console.log("deleting roles");
-            await deleteCollection(db, "roles", 100);
-            console.log("deleted roles");
 
-            // delete the bounty cards collection
-            console.log("deleting bounty-cards");
-            await deleteCollection(db, "bounty-cards", 100);
-            console.log("deleted bounty-cards");
+    });
 
-            // delete the tasks collection
-            console.log("deleting tasks");
-            await deleteCollection(db, "tasks", 100);
-            console.log("deleted tasks");
 
-            // fetch users from trello & create in firebase
+exports.importTasks = functions
+    .https.onRequest(async (req, res) => {
+        res.set('Access-Control-Allow-Origin', '*');
+        let taskWarnings = [];
 
-            const reqMembers = await axios.get(apiMembers);
-            const members = reqMembers.data;
-            console.log(`retrieved member data: ${JSON.stringify(members)}`);
+        // delete the tasks collection
+        console.log("deleting tasks");
+        await deleteCollection(db, "tasks", 100);
+        console.log("deleted tasks");
 
-            members.forEach(async (m) => {
-                console.log("creating user");
-                const userRecord = await admin
-                    .auth()
-                    .createUser({
-                        uid: m.id,
-                        email: `${m.username}@dashincubator.app`,
-                        displayName: m.username,
-                        photoURL: `${m.avatarUrl}/50.png`
-                    });
-                console.log("Successfully created new user:", userRecord.uid);
-            });
 
-            // TODO - Add usernames to profile
 
-            // TODO - Update Admin Roles
+        const reqCards = await axios.get(apiCards);
+        const allCards = reqCards.data;
+        //console.log(`retrieved card data: ${JSON.stringify(allCards)}`);
 
-            // fetch and process trello bounty data
-
-            const reqCards = await axios.get(apiCards);
-            const allCards = reqCards.data;
-            //console.log(`retrieved card data: ${JSON.stringify(allCards)}`);
-
-            // ignore Concepts for now
-            const cardsToProcess = allCards.filter((item) =>
-                item.idList !== settings.listIdConcepts);
+        // ignore Concepts for now
+        const cardsToProcess = allCards.filter((item) =>
+            item.idList !== settings.listIdConcepts);
 
             // remove cards with no checkklist?? -shouldn't be necessary
+            //collect tasks errors
 
             // proceess card level data
-            cardsToProcess.map(async (c) => {
+            /*await Promise.all(*/cardsToProcess.map(async (c) => {
+
                 const card = {};
-                card.trelloId = c.id;
-                card.title = c.name;
-                card.description = c.desc;
+                /* 
+                   card.trelloId = c.id;
+                   card.title = c.name;
+                   card.description = c.desc;
+   
+                   //get custom fields
+                   let cardCustomFields = processCustomFields(c.customFieldItems);
+                   card.workType = cardCustomFields.workType || null;
+                   card.rating = cardCustomFields.rating;
+                   card.source = cardCustomFields.source;
+                   card.website = cardCustomFields.website;
+                   card.completed = cardCustomFields.completed;
+                   card.paused = cardCustomFields.paused;
+                   card.meta = cardCustomFields.meta
+   
+                   console.log("got custom fields")
+   
+                   //get admins
+                   let cardAdmins = c.members;
+                   console.log("cardAdmins", cardAdmins)
+                   if (cardAdmins.length == 1) {
+                       card.adminPrimary = cardAdmins[0].id
+                       card.adminSecondary = null;
+                   }
+                   else if (cardAdmins.length == 2) {
+                       // TODO: map secondry admin username 
+                       // to find primary & secondary
+   
+                       card.adminPrimary = cardAdmins[0].id
+                       card.adminSecondary = null;
+                   }
+                   else {
+                       card.adminPrimary = null;
+                       card.adminSecondary = null;
+                   }
+   
+   
+                   // process tasks
+                   card.tasksProduction = [];
+                   card.tasksSpecification = [];
+                   card.tasksQA = [];
+                   card.tasksOrphaned = [];
+                   //tasksAll = [];
+   
+   */
 
-                //get custom fields
-                let cardCustomFields = processCustomFields(c.customFieldItems);
-                card.workType = cardCustomFields.workType || null;
-                card.rating = cardCustomFields.rating;
-                card.source = cardCustomFields.source;
-                card.website = cardCustomFields.website;
-                card.completed = cardCustomFields.completed;
-                card.paused = cardCustomFields.paused;
-                card.meta = cardCustomFields.meta
 
-                console.log("got custom fields")
-
-                //get admins
-                let cardAdmins = c.members;
-                console.log("cardAdmins", cardAdmins)
-                if (cardAdmins.length == 1) {
-                    card.adminPrimary = cardAdmins[0].id
-                    card.adminSecondary = null;
-                }
-                else if (cardAdmins.length == 2) {
-                    // TODO: map secondry admin username 
-                    // to find primary & secondary
-
-                    card.adminPrimary = cardAdmins[0].id
-                    card.adminSecondary = null;
-                }
-                else {
-                    card.adminPrimary = null;
-                    card.adminSecondary = null;
-                }
-
-
-                // process tasks
-                card.tasks = [];
-
-                //collect tasks errors
-                let taskWarnings = [];
 
                 console.log("processing tasks")
 
@@ -163,70 +185,110 @@ exports.transfer = functions
                     }
                     await Promise.all(checklist.checkItems.map(async checklistItem => {
                         let task = {};
-                        let taskFatalErrors;
+                        //let taskFatalErrors;
 
-                        let taskId = checklistItem.id;
+                        //let taskId = checklistItem.id;
                         let checklistItemName = checklistItem.name;
 
+                        /*
                         if (ignoreBadTaskListName) {
                             taskWarnings.push({ warnLevel: 1, warningText: `Has bad checklist item name (${checklistName}) - Not processed`, cardName: card.name, cardUrl: card.shortUrl, taskDesc: checklistItemName });
                             taskFatalErrors = true;
 
                         }
+                        */
 
 
 
-                        let parsedDesc = splitTaskDescription(checklistItemName);
-                        //console.log("PARSED DESC", parsedDesc)
+                        let parsedDesc = await splitTaskDescription(
+                            checklistItem.name
+                        );
+                        //console.log("PARSED DESC")
+                        //console.dir(parsedDesc)
 
                         //console.log('parsedDesc', parsedDesc);
                         task.number = parsedDesc.taskNumber;
+                        /*
                         if (task.number == null) {
                             taskWarnings.push({ warnLevel: 1, warningText: `Task Number did not parse (${checklistName}) - Not processed`, cardName: c.name, cardUrl: c.shortUrl, taskDesc: checklistItemName });
                             taskFatalErrors = true;
+                            
 
                         }
+                        */
                         task.description = parsedDesc.taskDesc
+                        /*
                         if (task.description == null) {
                             taskWarnings.push({ warnLevel: 1, warningText: `Task Description did not parse (${checklistName}) - Not processed`, cardName: c.name, cardUrl: c.shortUrl, taskDesc: checklistItemName });
                             taskFatalErrors = true;
 
                         }
+                        */
 
-
-                        if (parsedDesc.rewardDash == null) {
+                        task.rewardDash = parsedDesc.taskRewardDash
+                        /*
+                        if (  task.rewardDash == null) {
                             taskWarnings.push({ warnLevel: 1, warningText: `Task Amount did not parse (${checklistName}) - Not processed`, cardName: c.name, cardUrl: c.shortUrl, taskDesc: checklistItemName });
                             taskFatalErrors = true;
+                            
 
                         }
-                        else {
-                            task.rewardDash = rewardDash.toFixed(2)
+                        */
+
+                        if (checklistItem.due != null) {
+                            task.due = new Date(checklistItem.due)
                         }
-
-
-                        task.due = checklistItem.due || null;
-
+                        else { task.due = null }
+                        //console.log("due", task.due)
 
                         //assigned member
                         task.assignedMemberId = checklistItem.idMember || null;
+                        //console.log("asignedMember", task.assignedMemberId)
 
+                        //? completed
+                        if (checklistItem.state == 'complete') {
+                            task.complete = true
+                        }
+                        else {
+                            task.complete = false
+                        }
 
                         //write the task
+
+
+                        //console.log("TASK")
+                        //console.dir(task)
+
                         // TODO write to correct task type
-                        let taskWriteResult =
-                            await admin.firestore().collection("tasks").doc(checklistItem.id).set(task);
+                        return admin.firestore().collection("tasks").doc(checklistItem.id).set(task)
+                            .then((result) => { console.log("taskWriteResult", result); })
+                            .catch((error) => { console.log("error adding task", error) })
+
                         // Send back a message that we've successfully written the message
-                        ///console.log("taskWriteResult", taskWriteResult);
+
                         //console.log({ result: `Task with ID: ${taskWriteResult.id} added.` });
 
                         //if (taskFatalErrors) { return; }
                         //TODO: make a reference type 
+                        /*
+                        let taskDoc = db.doc(`/tasks/${taskId}`)
+                        switch (checklistName) {
+                            case 'Production Tasks':
+                                card.tasksProduction.push(taskDoc)
+                                break
+                            case 'Specification Tasks':
+                                card.tasksSpecification.push(taskDoc)
+                                break
+                            case 'QA Tasks':
+                                card.tasksQA.push(taskDoc)
+                                break
+                            default:
+                                //there shoudln't be any!
+                                card.tasksOrphaned.push(taskDoc)
 
-                        taskDoc = db.doc(`/tasks/${taskId}`)
-                        //console.log("TASK DOC", taskDoc)
-                        card.tasks.push(taskDoc)
-                        console.log("CARD TASKS:", card.tasks.length)
+                        }
 
+*/
 
 
 
@@ -240,80 +302,179 @@ exports.transfer = functions
                 //console.log("CARD TASKS:", card.tasks)
 
                 //console.log("task warnings", taskWarnings)
-
+                /*
 
                 console.log(`adding bounty-card`);
-                console.log("CARD TASKS LENGTH:", card.tasks.length)
+                //console.log("CARD TASKS LENGTH:", card.tasks.length)
                 //console.dir(card)
                 let docwWriteResult =
                     await admin.firestore().collection("bounty-cards").doc(c.id).set(card);
                 // Send back a message that we've successfully written the message
                 //console.log({ result: `Bounty card with ID: ${docwWriteResult.id} added.` });
-            });
+                */
+            })/*)*/
 
 
-            // TODO: get comments/history
 
-            return res.status(200).json(
-                { success: true },
-            );
-        } catch (e) {
-            return res.status(500).json({
-                error: e,
-            });
-        }
+
+
+
 
     });
 
 
 
-    exports.importUsers = functions
+exports.importBounties = functions
     .https.onRequest(async (req, res) => {
         res.set('Access-Control-Allow-Origin', '*');
-        try {
-            // delete all exiting users
 
-            const allUsers = await admin.auth().listUsers();
-            console.log("allUSers", allUsers);
-            const allUsersUID = allUsers.users.map((user) => user.uid);
-            await admin.auth().deleteUsers(allUsersUID);
-            console.log("deleted existing users");
 
-            // delete the roles collection
-            console.log("deleting roles");
-            await deleteCollection(db, "roles", 100);
-            console.log("deleted roles");
 
-            // fetch users from trello & create in firebase
 
-            const reqMembers = await axios.get(apiMembers);
-            const members = reqMembers.data;
-            console.log(`retrieved member data: ${JSON.stringify(members)}`);
 
-            await Promise.all(members.forEach(async (m) => {
-                console.log("creating user");
-                const userRecord = await admin
-                    .auth()
-                    .createUser({
-                        uid: m.id,
-                        email: `${m.username}@dashincubator.app`,
-                        password: 'password',
-                        displayName: m.username,
-                        photoURL: `${m.avatarUrl}/50.png`
-                    });
-                console.log("Successfully created new user:", userRecord.uid);
-            }));
 
-            return res.status(200).json(
-                { success: true },
-            );
-        } catch (e) {
-            return res.status(500).json({
-                error: e,
-            });
-        }
+        // delete the bounty cards collection
+        console.log("deleting bounty-cards");
+        await deleteCollection(db, "bounty-cards", 100);
+        console.log("deleted bounty-cards");
+
+
+
+        // fetch and process trello bounty data
+
+        const reqCards = await axios.get(apiCards);
+        const allCards = reqCards.data;
+        //console.log(`retrieved card data: ${JSON.stringify(allCards)}`);
+
+        // ignore Concepts for now
+        const cardsToProcess = allCards.filter((item) =>
+            item.idList !== settings.listIdConcepts);
+
+        // remove cards with no checkklist?? -shouldn't be necessary
+
+        // proceess card level data
+        await Promise.all(cardsToProcess.map(async (c) => {
+            const card = {};
+            card.trelloId = c.id;
+            card.title = c.name;
+            card.description = c.desc;
+
+            //get custom fields
+            let cardCustomFields = await processCustomFields(c.customFieldItems);
+            //console.log('got back custom fields:')
+            // console.dir(cardCustomFields)
+            card.workType = cardCustomFields.workType;
+            card.rating = cardCustomFields.rating;
+            card.source = cardCustomFields.source;
+            card.website = cardCustomFields.website;
+            card.completed = cardCustomFields.completed;
+            card.paused = cardCustomFields.paused;
+            card.meta = cardCustomFields.meta
+
+            //console.log("got custom fields")
+
+            //get admins
+            let cardAdmins = c.members;
+            //console.log("cardAdmins", cardAdmins)
+            if (cardAdmins.length == 1) {
+                card.adminPrimary = cardAdmins[0].id
+                card.adminSecondary = null;
+            }
+            else if (cardAdmins.length == 2) {
+                // TODO: map secondry admin username 
+                // to find primary & secondary
+
+                card.adminPrimary = cardAdmins[0].id
+                card.adminSecondary = null;
+            }
+            else {
+                card.adminPrimary = null;
+                card.adminSecondary = null;
+            }
+
+
+            // process tasks
+            card.tasksProduction = [];
+            card.tasksSpecification = [];
+            card.tasksQA = [];
+            card.tasksOrphaned = [];
+            //tasksAll = [];
+
+            //collect tasks errors
+            //let taskWarnings = [];
+
+            //console.log("processing tasks")
+
+            await Promise.all(c.checklists.map(async checklist => {
+                let ignoreBadTaskListName;
+                let checklistName = checklist.name;
+                //let taskType = checklist.name.split(" ")[0].toUpperCase()
+                //We don't need Concept Tasks
+                if (checklistName != 'Production Tasks' &&
+                    checklistName != 'Specification Tasks' &&
+                    checklistName != 'QA Tasks') {
+                    ignoreBadTaskListName = true;
+
+                }
+                await Promise.all(checklist.checkItems.map(async checklistItem => {
+
+                    let taskId = checklistItem.id;
+
+
+
+                    let taskDoc = db.doc(`/tasks/${taskId}`)
+                    switch (checklistName) {
+                        case 'Production Tasks':
+                            card.tasksProduction.push(taskDoc)
+                            break
+                        case 'Specification Tasks':
+                            card.tasksSpecification.push(taskDoc)
+                            break
+                        case 'QA Tasks':
+                            card.tasksQA.push(taskDoc)
+                            break
+                        default:
+                            //there shoudln't be any!
+                            card.tasksOrphaned.push(taskDoc)
+
+                    }
+
+
+
+
+
+                }))
+
+
+            }))
+
+
+
+            //console.log("CARD TASKS:", card.tasks)
+
+            //console.log("task warnings", taskWarnings)
+
+
+            //console.log(`adding bounty-card`);
+            //console.log("CARD TASKS LENGTH:", card.tasks.length)
+            //console.dir(card)
+
+            admin.firestore().collection("bounty-cards").doc(c.id).set(card)
+                .then((result) => {
+                    console.log(`Bounty added: ${result}`);
+                })
+                .catch((error) => {
+                    console.log(`Error adding bounty: ${error}`);
+                })
+
+
+        }))
+
 
     });
+
+
+
 
 
 async function deleteCollection(db, collectionPath, batchSize) {
@@ -356,7 +517,7 @@ async function deleteQueryBatch(db, query, resolve) {
 
 // TRello card procesing
 
-function processCustomFields(arrCustomFields) {
+async function processCustomFields(arrCustomFields) {
     /** accepts an array of custom fields from card data
           *  returns an object containing Work Type & Skills
           *  global constants for custom fields
@@ -366,8 +527,12 @@ function processCustomFields(arrCustomFields) {
     const customFields = {};
 
     // get cardWorkType
+    //console.log ('procesing work type idCustomField:' , settings.customFieldWorkTypeId)
     arrCustomFields.filter((field) => field.idCustomField == settings.customFieldWorkTypeId)
+
         .map((value) => {
+
+
             switch (value.idValue) {
                 case settings.customFieldWorkTypeValueProject:
                     customFields.workType = "Project";
@@ -422,6 +587,7 @@ function processCustomFields(arrCustomFields) {
 
     // get Rating
     const filterRating = arrCustomFields.filter((field) => field.idCustomField == settings.customFieldRatingId);
+    //console.log('looking for rating')
     if (filterRating.length > 0) {
         filterRating.map((value) => {
             customFields.rating = parseFloat(value.value.number);
@@ -432,6 +598,7 @@ function processCustomFields(arrCustomFields) {
 
     // get Source
     const filterSource = arrCustomFields.filter((field) => field.idCustomField == settings.customFieldSourceId);
+    //console.log('looking for source')
     if (filterSource.length > 0) {
         filterSource.map((value) => {
             customFields.source = value.value.text;
@@ -454,7 +621,7 @@ function processCustomFields(arrCustomFields) {
     const filterCompleted = arrCustomFields.filter((field) => field.idCustomField == settings.customFieldCompletedId);
     if (filterCompleted.length > 0) {
         filterCompleted.map((value) => {
-            console.log("BOUNTy COMPLETE?", value.value.checked);
+            //console.log("BOUNTy COMPLETE?", value.value.checked);
             customFields.completed = value.value.checked == "true";
         });
     } else {
@@ -495,18 +662,21 @@ function processCustomFields(arrCustomFields) {
     return customFields;
 }
 
-function splitTaskDescription(strTaskDescription) {
+async function splitTaskDescription(strTaskDescription) {
     /** Splits task description into data */
     try {
         const firstRBracket = strTaskDescription.indexOf(")");
 
         // task number
-        let taskNumber = null;
+
 
         const parseTaskNum = strTaskDescription.substr(0, firstRBracket);
 
         // if ($.isNumeric(parseTaskNum)) {
-        taskNumber = parseTaskNum;
+        let taskNumber = parseInt(parseTaskNum);
+        if (isNaN(taskNumber)) {
+            taskNumber = null;
+        }
         // }
 
 
@@ -535,21 +705,40 @@ function splitTaskDescription(strTaskDescription) {
                     */
 
         const lastBracketContent = strTaskDescription.substr(lastLBracket + 1, lastRBracket - lastLBracket - 1).trim().toUpperCase();
-        // console.log('lastBracketContent',lastBracketContent);
+        //console.log('lastBracketContent',lastBracketContent);
         const posOfTextDash = lastBracketContent.indexOf("DASH");
         // console.log('posOfTextDash',posOfTextDash);
         const amountStr = lastBracketContent.substr(0, posOfTextDash).trim();
-        // console.log('amountStr',amountStr);
+
+        //console.log('amountStr',amountStr);
         // TODO: $.isNumeric is DEPRECATED!
         // replace with pure JS implementation
-        let amt = null;
+
         // if ($.isNumeric(amountStr)) {
-        amt = parseFloat(amountStr);
+
+        let amt = parseFloat(amountStr);
+
+        if (isNaN(amt)) {
+            amt = null
+        }
+
+
+        // console.log('AMOUNT', amt)
         // }
         return { taskNumber: taskNumber, taskDesc: taskDesc, taskRewardDash: amt };
     } catch (e) {
-        console.log(e);
+        console.log("error parsing task description", e);
         // throw e
-        return { taskNumber: null, taskDesc: null, rewardDash: null };
+        //return { taskNumber: null, taskDesc: null, rewardDash: null };
     }
+}
+
+function validURL(str) {
+    var pattern = new RegExp('^(https?:\\/\\/)?' + // protocol
+        '((([a-z\\d]([a-z\\d-]*[a-z\\d])*)\\.)+[a-z]{2,}|' + // domain name
+        '((\\d{1,3}\\.){3}\\d{1,3}))' + // OR ip (v4) address
+        '(\\:\\d+)?(\\/[-a-z\\d%_.~+]*)*' + // port and path
+        '(\\?[;&a-z\\d%_.~+=-]*)?' + // query string
+        '(\\#[-a-z\\d_]*)?$', 'i'); // fragment locator
+    return !!pattern.test(str);
 }
